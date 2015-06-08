@@ -3,12 +3,12 @@
 #include <tchar.h> 
 #include <stdio.h>
 #include <strsafe.h>
-
 #include <stdlib.h>
 #include <string>
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 #import <msxml6.dll> rename_namespace(_T("MSXML"))
 
@@ -17,7 +17,7 @@
 using namespace std;
 
 typedef struct{
-  float farr[21]; // this is more than needed, but right Number of Peaks is returned by GetNumberOfPeaks()
+  float farr[99]; // this is more than needed, but right Number of Peaks is returned by GetNumberOfPeaks()
   // Open question: How to deal with this in PVSS? There must be better ideas.
   // ==> TPC prefers single service for each datapointelement anyway.
 }COMPLEXDATA;
@@ -31,7 +31,7 @@ string from_variant(VARIANT& vt)
 
 int GetStreamNumber(string LatestFolderName)
   // returns the Name of the Stream (Stream 1, 2, 3 ... 10) that was used by the Gaschromatograph's Stream-Selector,
-  // by reading "SampleName" from "Result.xml"
+  // by reading "Location" from "Result.xml"
 {
   HRESULT hr = CoInitialize(NULL); 
   if (SUCCEEDED(hr))
@@ -51,7 +51,7 @@ int GetStreamNumber(string LatestFolderName)
       {
 	xmlDoc->setProperty("SelectionLanguage", "XPath");		
 	// Find out from which Stream of the Chromatograph's Streamselector the XML file was produced.
-	MSXML::IXMLDOMNodeListPtr SampleName = xmlDoc->getElementsByTagName("SampleName"); //Pointer to List of Elements with specified name
+	MSXML::IXMLDOMNodeListPtr SampleName = xmlDoc->getElementsByTagName("Location"); //Pointer to List of Elements with specified name
 	MSXML::IXMLDOMElementPtr spElementTemp = (MSXML::IXMLDOMElementPtr) SampleName->item[0];
 	MSXML::IXMLDOMTextPtr spText = spElementTemp->firstChild;
 	// spText->nodeValu is e.g. "Stream 1". Extract the integer Number of the Stream:
@@ -73,10 +73,9 @@ int GetStreamNumber(string LatestFolderName)
 }
 
 
-
 string GetIjnectionTime(string LatestFolderName)
   // returns the InjectionDateTime
-  // by reading "SampleName" from "Result.xml"
+  // by reading "InjectionDateTime" from "Result.xml"
 {
   HRESULT hr = CoInitialize(NULL); 
   if (SUCCEEDED(hr))
@@ -220,7 +219,7 @@ string CutTheCrap(string line)
 
 int _tmain(int argc, TCHAR *argv[])
 {
-  float MethodRuntime=86000; //runtime of GC method in ms.
+  float MethodRuntime=960000; //runtime of GC method + 1 minute in ms.
   LARGE_INTEGER filesize;
   TCHAR szDir[MAX_PATH];
   size_t length_of_arg;
@@ -257,46 +256,69 @@ int _tmain(int argc, TCHAR *argv[])
   int StreamNumber;
 
   // DIM par starts here
-  // create variables for DIM Services of TPC:
-  float CO2_TPC=0;
-  float Argon_TPC=0;
-  float N2_TPC=0;
-  float Water_TPC=0;
+  // create variables for DIM Services:
+  //TPC
+  float CO2_TPC, Argon_TPC, N2_TPC;
+  float CO2_TPC_cal, Argon_TPC_cal, N2_TPC_cal;
+  float calTPC=1.0167405666;
+  //for TPC average:
+  bool averageTPC=TRUE; // toggle to compute average
+  bool haveTPCdata=FALSE;
+  vector<float> vecTPC_Argon, vecTPC_CO2, vecTPC_N2;
+  //TRD
+  float CO2_TRD=0, Xe_TRD=0, N2_TRD=0;
+  float Xe_TRD_cal, CO2_TRD_cal, N2_TRD_cal;
+  float calTRD=0.7029554088;
+  float calN2=1.0733399;
   // create Retention Time values:
-  float RTCO2_min = 2.9f; //the "f" is to explicitly tell the compiler this is a float. I get "truncation from 'double' to 'float'" warning otherwise !?
-  float RTCO2_max = 3.3f;
-  float RTArgon_min = 5.8f;
+  float RTCO2_min = 3.8f; //the "f" is to explicitly tell the compiler this is a float. I get "truncation from 'double' to 'float'" warning otherwise !?
+  float RTCO2_max = 4.1f;
+  float RTCO2_c1only_min = 3.7f;	//for TRD analysis (using only column 1:)
+  float RTCO2_c1only_max = 4.2f;	//for TRD analysis (using only column 1:)
+  float RTArgon_min = 5.55f;
   float RTArgon_max = 6.25f;
   // create DIM-Services
   COMPLEXDATA PeakAreaPercentData;
   COMPLEXDATA PeakAreaData;
   COMPLEXDATA RTData;
-  DimService Stream1("Stream1_PeakAreas","F:7",(void *)&PeakAreaPercentData, sizeof(PeakAreaPercentData));
-  DimService tpcCO2Content("ALICE_GC.Actual.tpcCO2Content",CO2_TPC); 
-  DimService tpcArgonContent("ALICE_GC.Actual.tpcArgonContent",Argon_TPC); 
-  DimService tpcN2Content("ALICE_GC.Actual.tpcN2Content",N2_TPC); 
-  DimService tpcWaterContent("ALICE_GC.Actual.tpcWaterContent",Water_TPC);
-  DimServer::setDnsNode("localhost"); //tpc dim dns node: 'alitpcdimdns'
+
+  //tpc
+  //DimService Stream1("Stream1_PeakAreas","F:7",(void *)&PeakAreaPercentData, sizeof(PeakAreaPercentData));
+  DimService tpcCO2Content("ALICE_GC.Actual.tpcCO2Content",CO2_TPC_cal); 
+  DimService tpcArgonContent("ALICE_GC.Actual.tpcArgonContent",Argon_TPC_cal); 
+  DimService tpcN2Content("ALICE_GC.Actual.tpcN2Content",N2_TPC_cal); 
+
+  //trd
+  DimService trdCO2Content("ALICE_GC.Actual.trdCO2Content",CO2_TRD_cal); 
+  DimService trdXeContent("ALICE_GC.Actual.trdXeContent",Xe_TRD_cal); 
+  DimService trdN2Content("ALICE_GC.Actual.trdN2Content",N2_TRD_cal); 
+
+  // --- alarm stuff:
+  int alarmCount;
+  int alarmCount2=0;
+  int GC_FSM_State=1;
+  DimService trdFSMState("ALICE_GC.FSM.State",GC_FSM_State); 
+  // ---
+
+  DimServer::setDnsNode("alitpcdimdns"); //tpc dim dns node: 'alitpcdimdns' // or 'localhost' for local dns
   DimServer::start("ALICE_GC");
 
   string InjectionTimeAndDate_store1;
-  string InjectionTimeAndDate_store2 = "this must not be empty" ;
 
-  //produce log file
-  ofstream LogFile; //write stuff to file
-  int SleepTime = 30000;
-  string FolderNameBuffer1;
-  string FolderNameBuffer2;
+  //log file
+  ofstream LogFile;
   LogFile.open ("DIM_logfile.log", ios::out | ios::app);
   LogFile << "\n \n \n ### DIM SERVER STARTED in "<< targetDirectory << " ### \n \n";
 
-  bool acquiringNow;
-  bool FoundXmlFile;
-  bool forceExit;
-  int roundNumber;
+  string FolderNameBuffer1;
+  string FolderNameBuffer2;
+
+  bool acquiringNow, FoundXmlFile, forceExit, trd1, trd2, tpc1, tpc2, tpcOutlierBool=FALSE;
+  int roundNumber, tpcOutlier;
   float roundDuration = 5000;
   string PathToACQUIRINGTXT =targetDirectory+"\\ACQUIRING.TXT";
   string lines[4];
+
 
 
   while(1)
@@ -304,22 +326,34 @@ int _tmain(int argc, TCHAR *argv[])
     // continuously look for new measurement-files. Update Dim Services with content of said files. Do this eternally.
     LogFile<< "\n \n ### Begin of Loop ###" <<endl;
 
-    // try to open file "ACQUIRING.TXT" that is produced by Agilent ChemStation during measurement and contains the folderpath for the next measurement.
+    // --- try to open file "ACQUIRING.TXT" that is produced by Agilent ChemStation during measurement and contains the folderpath for the next measurement.
     acquiringNow = FALSE;
+    alarmCount=0;
     do
     {
       ifstream CheckIfAcquiring(PathToACQUIRINGTXT);	
       acquiringNow = CheckIfAcquiring.good();
       CheckIfAcquiring.close();
-      Sleep(5000);
+      Sleep(roundDuration);
+      // FSM state of GC for WinCC alarm if GC does not send data for too long:
+      alarmCount++;
+      if(alarmCount > 1440 && GC_FSM_State == 1) //trigger alarm (option 1) after two hours. // Check GC_FSM_State for meaningfull timestamp in WinCC.
+      {
+	//update FSM state:
+	GC_FSM_State=0;
+	trdFSMState.updateService();
+	LogFile << "WinCC alarm triggered, using alarm option 1" <<endl;
+      }
     }
     while (!acquiringNow); //this loop does not need a further exit. If in doubt or if something bad happened: Continuously look if a new measurement is taking place.
+    // ---
 
+    //update FSM state:
 
     //now get folderpath of current measurement from that file.
     ifstream thatfile(PathToACQUIRINGTXT);
     for (int i=0;i<4;i++) thatfile >> lines[i]; //read content of that file line by line.
-    LatestFolderName = targetDirectory+"\\"+CutTheCrap(lines[2]); // CutTheCrap() will rwturn the Foldername in the corresponding line of that file.
+    LatestFolderName = targetDirectory+"\\"+CutTheCrap(lines[2]); // CutTheCrap() returns the Foldername in the corresponding line of that file.
     thatfile.close();
     LogFile << "New Folder: "<<LatestFolderName <<endl;
 
@@ -327,51 +361,191 @@ int _tmain(int argc, TCHAR *argv[])
     FoundXmlFile=FALSE;
     forceExit=FALSE;
     roundNumber = 0;
+
+    LogFile << "checking for Result.xml in " << LatestFolderName+"\\Result.xml" <<endl;
     do
     {
-      ifstream checkXML(LatestFolderName+"/Result.xml");	
+      ifstream checkXML(LatestFolderName+"\\Result.xml");	
       FoundXmlFile = checkXML.good();
       checkXML.close();
       Sleep(roundDuration);
-      // this loop needs a second exit, if the XML file in this very folder is not created for any reason.
-      // A GC measurement is atm 8.6 minutes long.
       roundNumber++;
-      if(roundNumber>(MethodRuntime+5000)/roundDuration) forceExit=TRUE;
+      // this loop needs a second exit, if the XML file in this very folder is not created for any reason. So:
+      if(roundNumber>(MethodRuntime/roundDuration-roundNumber))  // is true, after the time MethodRuntime has passed
+      {
+	LogFile << "no Result.xml found in " << LatestFolderName <<". Break do..while.. Loop" <<endl;
+	break;
+      }
     }
-    while(!FoundXmlFile || forceExit);
+    while(!FoundXmlFile);
     LogFile << "roundNumber for checking if Result.xml exists: " << roundNumber <<endl;
-    //Probe with GetStreamNumber() if there is already vaild information in the file.
+    //Probe if there is already vaild information in the file.
     roundNumber=0;
     do
     {
-      Sleep(3000);
+      Sleep(roundDuration);
       StreamNumber = GetStreamNumber(LatestFolderName);
-      // this loop needs a second exit, too. See above.s
       roundNumber++;
-      if(roundNumber>(MethodRuntime+6000)/3000) forceExit=TRUE;
+      LogFile << "second Loop" <<endl;
+      // this loop needs a second exit, too. See above. So:
+      if(roundNumber>(MethodRuntime/roundDuration-roundNumber)) // is true, after the time MethodRuntime has passed
+      {
+	alarmCount2++;
+	if(alarmCount2 > 7 && GC_FSM_State == 1) //trigger alarm option 2 after 8 times (larger than 7) the method runtime of no new data. This second option is needed, if acquiring file is created, but then GC software crahses. Check GC_FSM_State for meaningfull timestamp in WinCC.
+	{
+	  //update FSM state:
+	  GC_FSM_State=0;
+	  trdFSMState.updateService();
+	  alarmCount2=0;
+	  LogFile << "WinCC alarm triggered, using alarm option 2" <<endl;
+	}
+	LogFile << "Result.xml in " << LatestFolderName <<" corrupt?! Break do..while.. Loop" <<endl;
+	break;
+      }
     }
-    while (	StreamNumber == -1 || forceExit ); // GetStreamNumber returns -1 when there is no file that can be opened. If forceExit=True, there already was a very long wait, so do this only once!
+    while (	StreamNumber == -1); // GetStreamNumber returns -1 when there is no file that can be opened. If forceExit=True, there already was a very long wait, so do this only once!
 
-    LogFile << "Some Result.XML was read and GetStreamNumber() returned : " << StreamNumber<<endl;
-    Sleep(1000);
+    // --- if alarm was raised, a new file was found: Reset conditions:
+    if ( GetStreamNumber(LatestFolderName) != -1 )
+    {
+      // if a readable file is found, reset alarm counter for alarm option 2:
+      alarmCount2 = 0;
+      // and reset 
+      if ( GC_FSM_State != 1)
+      {
+	GC_FSM_State=1;
+	trdFSMState.updateService();
+      }
+    }
+    // ---
+
     InjectionTimeAndDate_store1 = GetIjnectionTime(LatestFolderName);
-    LogFile << "Injection Time = " << InjectionTimeAndDate_store1 <<endl;
     NumberOfPeaks = GetNumberOfPeaks(LatestFolderName);
     PeakAreaPercentData = GetPeakData(LatestFolderName,"AreaPercent");
     PeakAreaData = GetPeakData(LatestFolderName,"Area");
     RTData = GetPeakData(LatestFolderName,"RetTime");
-    cout << "Results.xml with Streamnumber 1 found in " << LatestFolderName <<endl;
+    //initialize output to zero
+    Argon_TPC=0, CO2_TPC=0, N2_TPC=0, Xe_TRD=0, CO2_TRD=0, N2_TRD=0;
+    trd1=FALSE, trd2=FALSE, tpc1=FALSE, tpc2=FALSE;
     for (int i=0;i<NumberOfPeaks;i++)
     {
-      if ( StreamNumber == 1 ) // StreamNumber 1 is TPC GAS ==> update DIM Services for TPC
-      {
-	// decide based on Retention Time which peak is which and update DIM services accordingly:
-	if ( RTCO2_min<RTData.farr[i] && RTData.farr[i]<RTCO2_max ) CO2_TPC = PeakAreaPercentData.farr[i], LogFile<< "CO2 candidate: " << CO2_TPC <<endl , tpcCO2Content.updateService();
-	if ( RTArgon_min<RTData.farr[i] && RTData.farr[i]<RTArgon_max ) Argon_TPC = PeakAreaPercentData.farr[i], LogFile<< "Argon candidate: " << Argon_TPC <<endl , tpcArgonContent.updateService();
+      if ( StreamNumber == 1 ) // StreamNumber 1 is TPC GAS
+      {		
+	// decide, based on PeakAreaPercent, which Peak is which and update services
+	if ( PeakAreaPercentData.farr[i] > 70. && RTCO2_max < RTData.farr[i] ) Argon_TPC = PeakAreaData.farr[i], tpc2=TRUE;
+	if ( PeakAreaPercentData.farr[i] > 6. && RTCO2_min < RTData.farr[i] && RTCO2_max > RTData.farr[i] ) CO2_TPC = PeakAreaData.farr[i], tpc1=TRUE;
+	if ( 11.6 < RTData.farr[i] && RTData.farr[i] <12.3 ) N2_TPC = PeakAreaData.farr[i];
       }
-      if (PeakAreaPercentData.farr[0] >= 0 ) Stream1.updateService(); //only update Stream1 when it contains real data (that is no dummy data "-1").
+      if ( StreamNumber == 5 ) // TRD Pur OUT
+      {
+	tpcOutlierBool=TRUE;
+	if(NumberOfPeaks==3 || NumberOfPeaks==2)
+	{
+	  continue; // if exactly three or two peaks in TRD gas: Identify peaks by order. See below. This is certain peak identification for the GC method using only column 1.
+	}
+	else
+	{
+	  if ( 4.2 < RTData.farr[i] && 4.97 > RTData.farr[i] ) Xe_TRD = PeakAreaData.farr[i],trd2=TRUE;
+	  if ( 3.6 < RTData.farr[i] && 4.2 > RTData.farr[i] ) CO2_TRD = PeakAreaData.farr[i],trd1=TRUE;
+	  if ( 3.35 < RTData.farr[i] && RTData.farr[i] <3.65 ) N2_TRD = PeakAreaData.farr[i];
+
+	}
+      }
     }
+
+    // ##########
+    // Solution TPC outlier problem: Calculate mean
+    if(StreamNumber==5 && haveTPCdata && vecTPC_Argon.size()>0 && averageTPC) //that is: if all TPC methods of a sequence are done
+    {
+      CO2_TPC_cal=0; Argon_TPC_cal=0; N2_TPC_cal=0;
+      for(int i=0; i < vecTPC_Argon.size(); i++)
+      {
+	Argon_TPC_cal+=vecTPC_Argon[i];
+	CO2_TPC_cal+=vecTPC_CO2[i];
+	N2_TPC_cal+=vecTPC_N2[i];
+      }
+      Argon_TPC_cal=Argon_TPC_cal/vecTPC_Argon.size();
+      LogFile << "##### RESULT ###### Argon_TPC_cal = " << Argon_TPC_cal<< " with vecTPC_Argon.size() = " << vecTPC_Argon.size() <<endl;
+      CO2_TPC_cal=CO2_TPC_cal/vecTPC_Argon.size();
+      LogFile << "##### RESULT ###### CO2_TPC_cal = " << CO2_TPC_cal<< " with vecTPC_CO2.size() = " << vecTPC_CO2.size() <<endl;
+      N2_TPC_cal=N2_TPC_cal/vecTPC_Argon.size();
+      tpcArgonContent.updateService();
+      tpcCO2Content.updateService();
+      tpcN2Content.updateService();
+      vecTPC_Argon.resize(0);
+      vecTPC_CO2.resize(0);
+      vecTPC_N2.resize(0);
+      haveTPCdata=FALSE;
+    }
+    // ##########
+
+    //TRD: easy peak identification for measurement with GC using only column 1:
+    if(StreamNumber==5 && NumberOfPeaks==3)
+    {
+      N2_TRD = PeakAreaData.farr[0];
+      CO2_TRD = PeakAreaData.farr[1],trd1=TRUE;
+      Xe_TRD = PeakAreaData.farr[2],trd2=TRUE;
+    }
+    else if(StreamNumber==5 && NumberOfPeaks==2)
+    {
+      CO2_TRD = PeakAreaData.farr[0],trd1=TRUE;
+      Xe_TRD = PeakAreaData.farr[1],trd2=TRUE;
+    }
+    else if(StreamNumber==5)
+    {
+      LogFile << ">>>>>>>>>>>>>>>>> TRD measurement shows unusual number of peaks. CHECK!!!" << endl;
+      cout << ">>>>>>>>>>>>>>>>> TRD measurement shows unusual number of peaks. CHECK!!!" << endl;
+    }
+    //TRD: calculate calibrated values + update DIM services
+    if(trd1&&trd2)
+    {
+      CO2_TRD_cal=0; Xe_TRD_cal=0; N2_TRD_cal=0;
+      CO2_TRD_cal=100*CO2_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
+      Xe_TRD_cal=100*calTRD*Xe_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
+      N2_TRD_cal=100*calN2*N2_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
+      trdXeContent.updateService();
+      trdCO2Content.updateService();
+      trdN2Content.updateService();
+      tpcOutlier=0,haveTPCdata=FALSE; //workaround TPC outlier problem
+    }
+
+    if(tpc1&&tpc2)
+    {
+      CO2_TPC_cal=0; Argon_TPC_cal=0; N2_TPC_cal=0;
+      CO2_TPC_cal=100*CO2_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC); // uses the same calN2 as TRD
+      Argon_TPC_cal=100*calTPC*Argon_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC);
+      N2_TPC_cal=100*calN2*N2_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC);
+      tpcOutlier++; //don't send first two TPC measurements to DCS (Outliers, not understood)
+      LogFile <<"tpcOutlier = "<<tpcOutlier<<endl;
+      if(tpcOutlier>2 || tpcOutlierBool==FALSE || !averageTPC) // second opton if DIM server is restared in the middle of a run
+      {
+	if(averageTPC)
+	{
+	  vecTPC_Argon.push_back(Argon_TPC_cal);
+	  vecTPC_CO2.push_back(CO2_TPC_cal);
+	  vecTPC_N2.push_back(N2_TPC_cal);
+	  haveTPCdata=TRUE;
+	}
+	else
+	{
+	  tpcArgonContent.updateService();
+	  tpcCO2Content.updateService();
+	  tpcN2Content.updateService();
+	}
+      }
+    }
+
+    LogFile << "vecTPC_Argon.size() = " << vecTPC_Argon.size() <<endl;
+    if(vecTPC_Argon.size()>0)
+    {
+      for (int i = 0; i<vecTPC_Argon.size(); i++)
+      {
+	LogFile<< "i = " << i << ", vecTPC_Argon[i] = " << vecTPC_Argon[i] <<endl;
+      }
+    }
+
+
     LogFile << "end of cycle" <<endl;
-    Sleep(5000); //ein bisschen Schlaf muss sein.
+    Sleep(5000); // just in case. Ein bisschen Schlaf muss sein
   }
 }
