@@ -1,4 +1,4 @@
-#include "dim.h"
+#include "gc_dim.h"
 
 using namespace std;
 
