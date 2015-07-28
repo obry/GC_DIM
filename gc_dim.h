@@ -14,7 +14,7 @@
 
 #pragma comment(lib, "User32.lib") // _bstr_t is in here.
 
-//data strcuture for sending many values via DIM at once. // is not used anymore
+//data strcuture for handling (and sending via DIM) many values at once.
 typedef struct{float farr[99];}COMPLEXDATA;
 
 // functions:
@@ -50,30 +50,36 @@ int StreamNumber;
 // create variables for DIM Services:
 //TPC
 float CO2_TPC, Argon_TPC, N2_TPC, CO2_TPC_cal, Argon_TPC_cal, N2_TPC_cal, calTPC;
-//for TPC average:
-bool averageTPC=FALSE; // toggle to compute average
-bool haveTPCdata=FALSE;
+float N22_TPC, N22_TPC_cal; // second N2 peak in TPC chromatogram
+
 //TRD
 float CO2_TRD, Xe_TRD, N2_TRD, Xe_TRD_cal, CO2_TRD_cal, N2_TRD_cal, calTRD, calN2;
 // create Retention Time values:
 float RTCO2_min, RTCO2_max, RTCO2_c1only_min, RTCO2_c1only_max, RTArgon_min, RTArgon_max;
 
-
-// create DIM-Services
+//storage for information from XML files
 COMPLEXDATA PeakAreaPercentData;
 COMPLEXDATA PeakAreaData;
 COMPLEXDATA RTData;
 
+// create DIM-Services
 //tpc
 //DimService Stream1("Stream1	_PeakAreas","F:7",(void *)&PeakAreaPercentData, sizeof(PeakAreaPercentData));
-DimService tpcCO2Content("ALICE_GC.Actual.tpcCO2Content",CO2_TPC_cal); 
-DimService tpcArgonContent("ALICE_GC.Actual.tpcArgonContent",Argon_TPC_cal); 
-DimService tpcN2Content("ALICE_GC.Actual.tpcN2Content",N2_TPC_cal); 
-
+//DimService tpcCO2Content("ALICE_GC.Actual.tpcCO2Content",CO2_TPC_cal); 
+//DimService tpcArgonContent("ALICE_GC.Actual.tpcArgonContent",Argon_TPC_cal); 
+//DimService tpcN2Content("ALICE_GC.Actual.tpcN2Content",N22_TPC_cal); 
+DimService * testDim;
+DimService * tpcCO2Content=0;
+DimService * tpcArgonContent=0; 
+DimService * tpcN2Content=0;
 //trd
-DimService trdCO2Content("ALICE_GC.Actual.trdCO2Content",CO2_TRD_cal); 
-DimService trdXeContent("ALICE_GC.Actual.trdXeContent",Xe_TRD_cal); 
-DimService trdN2Content("ALICE_GC.Actual.trdN2Content",N2_TRD_cal); 
+//DimService trdCO2Content("ALICE_GC.Actual.trdCO2Content",CO2_TRD_cal); 
+//DimService trdXeContent("ALICE_GC.Actual.trdXeContent",Xe_TRD_cal); 
+//DimService trdN2Content("ALICE_GC.Actual.trdN2Content",N2_TRD_cal); 
+DimService * trdCO2Content=0;
+DimService * trdXeContent=0;
+DimService * trdN2Content=0;
+
 
 // --- GC alarms, alarm stuff:
 // Make AliveCounter service for TPC and TRD
@@ -91,7 +97,7 @@ DimService dimsAliveCounterTPC("ALICE_GC.FSM.AliveCounterTPC",AliveCounterTPC);
 std::string InjectionTimeAndDate_store1;
 
 //log file
-std::ofstream LogFile;
+std::ofstream LogFile, LogResultsTPC, LogResultsTRD;
 
 std::string FolderNameBuffer1;
 std::string FolderNameBuffer2;

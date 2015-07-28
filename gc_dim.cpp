@@ -8,12 +8,9 @@ void setupParameters()
 
 	//Calibration values:
 	calN2=1.0733399f;
-	calTPC=1.0167405666f;
+	//calTPC=1.0167405666f;
+	calTPC=1.137365969f;
 	calTRD=0.7029554088f;
-
-	//for TPC average:
-	averageTPC=FALSE; // toggle to compute average
-	haveTPCdata=FALSE;
 
 	//TRD
 	CO2_TRD=0, Xe_TRD=0, N2_TRD=0;
@@ -36,8 +33,12 @@ void setupParameters()
 	AliveCounterTRD=0, AliveCounterTPC=0;
 
 
-	//log file
+	//log files
 	LogFile.open ("DIM_logfile.log", ios::out | ios::app);
+	LogResultsTPC.open ("DIM_LogResultsTPC.log", ios::out | ios::app);
+	LogResultsTRD.open ("DIM_LogResultsTRD.log", ios::out | ios::app);
+
+
 
 	// set DIM_DNS_NODE and start dim server:
 	DimServer::setDnsNode("alitpcdimdns"); //tpc dim dns node: 'alitpcdimdns' // or 'localhost' for local dns
@@ -45,15 +46,147 @@ void setupParameters()
 	LogFile << "\n \n \n ### DIM SERVER STARTED in "<< targetDirectory << " ### \n \n";
 }
 
+void setupDimServicesTRD()
+{
+	if (!trdCO2Content) trdCO2Content = new DimService("ALICE_GC.Actual.trdCO2Content",CO2_TRD_cal); 
+	if (!trdXeContent) trdXeContent = new DimService("ALICE_GC.Actual.trdXeContent",Xe_TRD_cal); 
+	if (!trdN2Content) trdN2Content = new DimService("ALICE_GC.Actual.trdN2Content",N2_TRD_cal); 
+}
+
+void setupDimServicesTPC()
+{
+	if(!tpcCO2Content) tpcCO2Content = new DimService("ALICE_GC.Actual.tpcCO2Content",CO2_TPC_cal); 
+	if(!tpcArgonContent) tpcArgonContent = new DimService("ALICE_GC.Actual.tpcArgonContent",Argon_TPC_cal); 
+	if(!tpcN2Content) tpcN2Content = new DimService("ALICE_GC.Actual.tpcN2Content",N22_TPC_cal); 
+}
+
+int findTPCPeaks(COMPLEXDATA PeakAreaPercentData, COMPLEXDATA PeakAreaData, COMPLEXDATA RTData)
+{
+	//initialize output to zero
+	Argon_TPC=0, CO2_TPC=0, N2_TPC=0;
+	tpc1=FALSE, tpc2=FALSE;
+	bool have_seen_TPC_N2_peak = FALSE;
+	// storage for log file values
+	float logRTCO2, logRTAr, logRTN2, logRTN22;
+
+	//find relevant peaks in TPC chromatogram
+	for (int i=0;i<NumberOfPeaks;i++)
+	{
+		// decide which Peak is which
+		if ( PeakAreaPercentData.farr[i] > 70. && RTCO2_max < RTData.farr[i] )
+		{
+			Argon_TPC = PeakAreaData.farr[i];
+			tpc2 = TRUE;
+			logRTAr = RTData.farr[i];
+		}
+		if ( PeakAreaPercentData.farr[i] > 6. && RTCO2_min < RTData.farr[i] && RTCO2_max > RTData.farr[i] )
+		{
+			CO2_TPC = PeakAreaData.farr[i];
+			tpc1=TRUE;
+			logRTCO2 = RTData.farr[i];
+		}
+		// for TPC N2, there currently are two very small peaks where N2 is supposed to be. If there are two peaks, take the larger one.
+		if ( 11.3 < RTData.farr[i] && RTData.farr[i] <12.3 && !have_seen_TPC_N2_peak )
+		{
+			N2_TPC = PeakAreaData.farr[i], have_seen_TPC_N2_peak=TRUE;
+			logRTN2 = RTData.farr[i];
+		}
+		if ( 11.3 < RTData.farr[i] && RTData.farr[i] <12.3 && have_seen_TPC_N2_peak )
+		{
+			N22_TPC = PeakAreaData.farr[i];
+			logRTN22 = RTData.farr[i];
+		}
+
+	}
+
+	// send peaks to WinCC
+	if(tpc1&&tpc2)
+	{
+		AliveCounterTPC++;
+		dimsAliveCounterTPC.updateService();
+
+		CO2_TPC_cal=0; Argon_TPC_cal=0; N2_TPC_cal=0;
+		CO2_TPC_cal=100*CO2_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC); // uses the same calN2 as TRD
+		Argon_TPC_cal=100*calTPC*Argon_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC);
+		N2_TPC_cal=100*calN2*N2_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC);
+		N22_TPC_cal=100*calN2*N22_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N22_TPC);
+		LogFile << "gc results: CO2 = " << CO2_TPC_cal<< "Ar = " << Argon_TPC_cal << "N2 = " << N2_TPC_cal <<endl;
+		setupDimServicesTPC(); //set up dim services when service variable is already filled with actual data: Avoids sending zero values to WinCC.
+		tpcArgonContent->updateService();
+		tpcCO2Content->updateService();
+		tpcN2Content->updateService();
+		LogResultsTPC << CO2_TPC_cal << " " << logRTCO2 << " " << Argon_TPC_cal << " " << logRTAr << " " << N2_TPC_cal << " " << logRTN2 << " " << N22_TPC_cal << " " << logRTN22 << " " << InjectionTimeAndDate_store1 << endl;
+		return 0;
+	}
+	return -1;
+}
+
+int findTRDPeaks(COMPLEXDATA PeakAreaPercentData, COMPLEXDATA PeakAreaData, COMPLEXDATA RTData)
+{
+	 Xe_TRD=0, CO2_TRD=0, N2_TRD=0;
+	 trd1=FALSE, trd2=FALSE; 
+	 // storage for logfile values
+	float logRTCO2, logRTN2, logRTXe;
+	//find relevant peaks in TRD chromatogram
+	for (int i=0;i<NumberOfPeaks;i++)
+	{
+		if(NumberOfPeaks==3 || NumberOfPeaks==2)
+		{
+			continue; // if exactly three or two peaks in TRD gas: Identify peaks by order. See below. This is certain peak identification for the GC method using only column 1.
+		}
+		else
+		{
+			if ( 4.2 < RTData.farr[i] && 4.97 > RTData.farr[i] ) Xe_TRD = PeakAreaData.farr[i], trd2=TRUE, logRTXe=RTData.farr[i];
+			if ( 3.6 < RTData.farr[i] && 4.2 > RTData.farr[i] ) CO2_TRD = PeakAreaData.farr[i], trd1=TRUE, logRTCO2=RTData.farr[i];
+			if ( 3.35 < RTData.farr[i] && RTData.farr[i] <3.65 ) N2_TRD = PeakAreaData.farr[i], logRTN2=RTData.farr[i];
+		}
+	}
+
+	//TRD: easy peak identification for measurement with GC using only column 1:
+	if(NumberOfPeaks==3)
+	{
+		N2_TRD = PeakAreaData.farr[0], logRTN2=RTData.farr[0];
+		CO2_TRD = PeakAreaData.farr[1], trd1=TRUE, logRTCO2=RTData.farr[1];
+		Xe_TRD = PeakAreaData.farr[2], trd2=TRUE, logRTXe=RTData.farr[2];
+	}
+	else if(NumberOfPeaks==2)
+	{
+		CO2_TRD = PeakAreaData.farr[0],trd1=TRUE, logRTCO2=RTData.farr[0];
+		Xe_TRD = PeakAreaData.farr[1],trd2=TRUE, logRTXe=RTData.farr[1];
+	}
+	else
+	{
+		LogFile << ">>>>>>>>>>>>>>>>> TRD measurement shows unusual number of peaks. CHECK!!!" << endl;
+		cout << ">>>>>>>>>>>>>>>>> TRD measurement shows unusual number of peaks. CHECK!!!" << endl;
+	}
+
+	//TRD: calculate calibrated values + update DIM services
+	if(trd1&&trd2)
+	{
+		AliveCounterTRD++;
+		dimsAliveCounterTRD.updateService();
+
+		CO2_TRD_cal=0; Xe_TRD_cal=0; N2_TRD_cal=0;
+		CO2_TRD_cal=100*CO2_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
+		Xe_TRD_cal=100*calTRD*Xe_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
+		N2_TRD_cal=100*calN2*N2_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
+		setupDimServicesTRD(); //set up dim services when service variable is already filled with actual data: Avoids sending zero values to WinCC.
+		trdXeContent->updateService();
+		trdCO2Content->updateService();
+		trdN2Content->updateService();
+		LogResultsTRD << CO2_TRD_cal << " " << logRTCO2 << " " << Xe_TRD_cal << " " << logRTXe << " " << N2_TRD_cal << " " << logRTN2 << " " << InjectionTimeAndDate_store1 << endl;
+		return 0;
+	}
+	return -1;
+}
+
+
 
 int _tmain(int argc, TCHAR *argv[])
 {
 	if(getTargetDir(argc, argv) != 0) return -1;
 
 	setupParameters();
-
-	// for tpc average:
-	vector<float> vecTPC_Argon, vecTPC_CO2, vecTPC_N2;
 
 	while(1)
 	{
@@ -126,141 +259,21 @@ int _tmain(int argc, TCHAR *argv[])
 			PeakAreaPercentData = GetPeakData(LatestFolderName,"AreaPercent");
 			PeakAreaData = GetPeakData(LatestFolderName,"Area");
 			RTData = GetPeakData(LatestFolderName,"RetTime");
-			//initialize output to zero
-			Argon_TPC=0, CO2_TPC=0, N2_TPC=0, Xe_TRD=0, CO2_TRD=0, N2_TRD=0, N2_TPC=0;
-			trd1=FALSE, trd2=FALSE, tpc1=FALSE, tpc2=FALSE;
-			bool have_seen_TPC_N2_peak = FALSE;
-			for (int i=0;i<NumberOfPeaks;i++)
-			{
-				if ( StreamNumber == 1 ) // StreamNumber 1 is TPC gas
-				{		
-					// decide, based on PeakAreaPercent, which Peak is which and update services
-					if ( PeakAreaPercentData.farr[i] > 70. && RTCO2_max < RTData.farr[i] ) Argon_TPC = PeakAreaData.farr[i], tpc2=TRUE;
-					if ( PeakAreaPercentData.farr[i] > 6. && RTCO2_min < RTData.farr[i] && RTCO2_max > RTData.farr[i] ) CO2_TPC = PeakAreaData.farr[i], tpc1=TRUE;
-					// for TPC N2, there currently are two very small peaks where N2 is supposed to be. If there are two peaks, take the larger one.
-					if ( 11.6 < RTData.farr[i] && RTData.farr[i] <12.3 && !have_seen_TPC_N2_peak ) N2_TPC = PeakAreaData.farr[i], have_seen_TPC_N2_peak=TRUE;
-					if ( 11.6 < RTData.farr[i] && RTData.farr[i] <12.3 && have_seen_TPC_N2_peak && N2_TPC<PeakAreaData.farr[i] ) N2_TPC = PeakAreaData.farr[i];
-				}
-				if ( StreamNumber == 5 ) // TRD Pur OUT
-				{
-					tpcOutlierBool=TRUE;
-					if(NumberOfPeaks==3 || NumberOfPeaks==2)
-					{
-						continue; // if exactly three or two peaks in TRD gas: Identify peaks by order. See below. This is certain peak identification for the GC method using only column 1.
-					}
 
-					else
-					{
-						if ( 4.2 < RTData.farr[i] && 4.97 > RTData.farr[i] ) Xe_TRD = PeakAreaData.farr[i],trd2=TRUE;
-						if ( 3.6 < RTData.farr[i] && 4.2 > RTData.farr[i] ) CO2_TRD = PeakAreaData.farr[i],trd1=TRUE;
-						if ( 3.35 < RTData.farr[i] && RTData.farr[i] <3.65 ) N2_TRD = PeakAreaData.farr[i];
-
-					}
-				}
+			if ( StreamNumber == 1 ) // StreamNumber 1 is TPC gas
+			{		
+				findTPCPeaks(PeakAreaPercentData, PeakAreaData, RTData);
 			}
-
-		}
-
-
-		// ##########
-		// Solution TPC outlier problem: Calculate mean
-		if(StreamNumber==5 && haveTPCdata && vecTPC_Argon.size()>0 && averageTPC) //that is: if all TPC methods of a sequence are done
-		{
-			CO2_TPC_cal=0; Argon_TPC_cal=0; N2_TPC_cal=0;
-			for(size_t i=0; i < vecTPC_Argon.size(); i++)
+			if ( StreamNumber == 5 ) // TRD Pur OUT
 			{
-				Argon_TPC_cal+=vecTPC_Argon[i];
-				CO2_TPC_cal+=vecTPC_CO2[i];
-				N2_TPC_cal+=vecTPC_N2[i];
-			}
-			Argon_TPC_cal=Argon_TPC_cal/vecTPC_Argon.size();
-			LogFile << "##### RESULT ###### Argon_TPC_cal = " << Argon_TPC_cal<< " with vecTPC_Argon.size() = " << vecTPC_Argon.size() <<endl;
-			CO2_TPC_cal=CO2_TPC_cal/vecTPC_Argon.size();
-			LogFile << "##### RESULT ###### CO2_TPC_cal = " << CO2_TPC_cal<< " with vecTPC_CO2.size() = " << vecTPC_CO2.size() <<endl;
-			N2_TPC_cal=N2_TPC_cal/vecTPC_Argon.size();
-			tpcArgonContent.updateService();
-			tpcCO2Content.updateService();
-			tpcN2Content.updateService();
-			vecTPC_Argon.resize(0);
-			vecTPC_CO2.resize(0);
-			vecTPC_N2.resize(0);
-			haveTPCdata=FALSE;
-		}
-		// ##########
-
-		//TRD: easy peak identification for measurement with GC using only column 1:
-		if(StreamNumber==5 && NumberOfPeaks==3)
-		{
-			N2_TRD = PeakAreaData.farr[0];
-			CO2_TRD = PeakAreaData.farr[1],trd1=TRUE;
-			Xe_TRD = PeakAreaData.farr[2],trd2=TRUE;
-		}
-		else if(StreamNumber==5 && NumberOfPeaks==2)
-		{
-			CO2_TRD = PeakAreaData.farr[0],trd1=TRUE;
-			Xe_TRD = PeakAreaData.farr[1],trd2=TRUE;
-		}
-		else if(StreamNumber==5)
-		{
-			LogFile << ">>>>>>>>>>>>>>>>> TRD measurement shows unusual number of peaks. CHECK!!!" << endl;
-			cout << ">>>>>>>>>>>>>>>>> TRD measurement shows unusual number of peaks. CHECK!!!" << endl;
-		}
-		//TRD: calculate calibrated values + update DIM services
-		if(trd1&&trd2)
-		{
-			AliveCounterTRD++;
-			dimsAliveCounterTRD.updateService();
-
-			CO2_TRD_cal=0; Xe_TRD_cal=0; N2_TRD_cal=0;
-			CO2_TRD_cal=100*CO2_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
-			Xe_TRD_cal=100*calTRD*Xe_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
-			N2_TRD_cal=100*calN2*N2_TRD/(CO2_TRD+calTRD*Xe_TRD+calN2*N2_TRD);
-			trdXeContent.updateService();
-			trdCO2Content.updateService();
-			trdN2Content.updateService();
-			tpcOutlier=0,haveTPCdata=FALSE; //workaround TPC outlier problem
-		}
-
-		if(tpc1&&tpc2)
-		{
-			AliveCounterTPC++;
-			dimsAliveCounterTPC.updateService();
-
-			CO2_TPC_cal=0; Argon_TPC_cal=0; N2_TPC_cal=0;
-			CO2_TPC_cal=100*CO2_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC); // uses the same calN2 as TRD
-			Argon_TPC_cal=100*calTPC*Argon_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC);
-			N2_TPC_cal=100*calN2*N2_TPC/(CO2_TPC+calTPC*Argon_TPC+calN2*N2_TPC);
-			tpcOutlier++; //don't send first two TPC measurements to DCS (Outliers, not understood)
-			LogFile <<"tpcOutlier = "<<tpcOutlier<<endl;
-			LogFile << "gc results: CO2 = " << CO2_TPC_cal<< "Ar = " << Argon_TPC_cal << "N2 = " << N2_TPC_cal <<endl;
-			if(tpcOutlier>2 || tpcOutlierBool==FALSE || !averageTPC) // second opton if DIM server is restared in the middle of a run
-			{
-				if(averageTPC)
-				{
-					vecTPC_Argon.push_back(Argon_TPC_cal);
-					vecTPC_CO2.push_back(CO2_TPC_cal);
-					vecTPC_N2.push_back(N2_TPC_cal);
-					haveTPCdata=TRUE;
-				}
-				else
-				{
-					tpcArgonContent.updateService();
-					tpcCO2Content.updateService();
-					tpcN2Content.updateService();
-				}
+				findTRDPeaks(PeakAreaPercentData, PeakAreaData, RTData);
 			}
 		}
 
-		LogFile << "vecTPC_Argon.size() = " << vecTPC_Argon.size() <<endl;
-		if(vecTPC_Argon.size()>0)
-		{
-			for (size_t i = 0; i<vecTPC_Argon.size(); i++)
-			{
-				LogFile<< "i = " << i << ", vecTPC_Argon[i] = " << vecTPC_Argon[i] <<endl;
-			}
-		}
 
-		LogFile << "end of cycle" <<endl;
+
+
+		LogFile << "end of cycle. Injection time of cycle = " << InjectionTimeAndDate_store1 <<endl;
 		Sleep(5000); // just in case. Ein bisschen Schlaf muss sein
 	}
 }
@@ -344,7 +357,7 @@ int GetStreamNumber(string LatestFolderName)
 		}
 		catch (_com_error &e)
 		{
-			printf("ERROR: %ws\n", e.ErrorMessage());
+			printf("ERROR1: %ws\n", e.ErrorMessage());
 		}
 		CoUninitialize();
 	}
@@ -384,7 +397,7 @@ string GetIjnectionTime(string LatestFolderName)
 		}
 		catch (_com_error &e)
 		{
-			printf("ERROR: %ws\n", e.ErrorMessage());
+			printf("ERROR2: %ws\n", e.ErrorMessage());
 		}
 		CoUninitialize();
 	}
@@ -417,7 +430,7 @@ int GetNumberOfPeaks(string LatestFolderName)
 		}
 		catch (_com_error &e)
 		{
-			printf("ERROR: %ws\n", e.ErrorMessage());
+			printf("ERROR3: %ws\n", e.ErrorMessage());
 		}
 		CoUninitialize();
 	}
@@ -473,7 +486,7 @@ COMPLEXDATA GetPeakData(string LatestFolderName, _bstr_t ElementName)
 		}
 		catch (_com_error &e)
 		{
-			printf("ERROR: %ws\n", e.ErrorMessage());
+			printf("ERROR4: %ws\n", e.ErrorMessage());
 		}
 		CoUninitialize();
 	}
