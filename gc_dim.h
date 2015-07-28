@@ -65,17 +65,10 @@ COMPLEXDATA RTData;
 // create DIM-Services
 //tpc
 //DimService Stream1("Stream1	_PeakAreas","F:7",(void *)&PeakAreaPercentData, sizeof(PeakAreaPercentData));
-//DimService tpcCO2Content("ALICE_GC.Actual.tpcCO2Content",CO2_TPC_cal); 
-//DimService tpcArgonContent("ALICE_GC.Actual.tpcArgonContent",Argon_TPC_cal); 
-//DimService tpcN2Content("ALICE_GC.Actual.tpcN2Content",N22_TPC_cal); 
-DimService * testDim;
 DimService * tpcCO2Content=0;
 DimService * tpcArgonContent=0; 
 DimService * tpcN2Content=0;
 //trd
-//DimService trdCO2Content("ALICE_GC.Actual.trdCO2Content",CO2_TRD_cal); 
-//DimService trdXeContent("ALICE_GC.Actual.trdXeContent",Xe_TRD_cal); 
-//DimService trdN2Content("ALICE_GC.Actual.trdN2Content",N2_TRD_cal); 
 DimService * trdCO2Content=0;
 DimService * trdXeContent=0;
 DimService * trdN2Content=0;
